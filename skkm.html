@@ -273,7 +273,24 @@
         let cachedEvents = [];
         let clockInterval = null;
 
-        const todayStr = new Date().toISOString().split('T')[0];
+        // Yerel tarih yardımcıları (UTC kaymasını önler)
+        function parseLocalDate(dateStr) {
+            if (!dateStr) return new Date();
+            const parts = String(dateStr).split('-');
+            if (parts.length === 3) {
+                return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+            }
+            return new Date();
+        }
+
+        function formatLocalDate(dateObj) {
+            const y = dateObj.getFullYear();
+            const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+            const d = String(dateObj.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+
+        const todayStr = formatLocalDate(new Date());
         document.getElementById('filter-date').value = todayStr;
         document.getElementById('pdf-report-month').value = todayStr.substring(0, 7);
 
@@ -436,6 +453,7 @@
 
             currentTab = 'genel';
             updateThemeAndPermissions();
+            renderActiveView();
             fetchEvents();
         }
 
@@ -697,49 +715,49 @@
         function switchTab(tab) {
             currentTab = tab;
             updateThemeAndPermissions();
+            renderActiveView();
             fetchEvents();
         }
 
         function navigateNav(dir) {
             const input = document.getElementById('filter-date');
-            const d = new Date(input.value);
+            const d = parseLocalDate(input.value || todayStr);
             if (currentTab === 'genel') {
                 d.setDate(d.getDate() + dir);
             } else {
                 d.setDate(d.getDate() + (dir * 7));
             }
-            input.value = d.toISOString().split('T')[0];
+            input.value = formatLocalDate(d);
+            renderActiveView();
             fetchEvents();
         }
 
         function get3DaysRange(dateStr) {
-            const curr = new Date(dateStr);
+            const base = parseLocalDate(dateStr || todayStr);
             const dates = [];
             for (let i = -1; i <= 1; i++) {
-                const next = new Date(curr);
-                next.setDate(curr.getDate() + i);
-                dates.push(next.toISOString().split('T')[0]);
+                const next = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
+                dates.push(formatLocalDate(next));
             }
             return dates;
         }
 
         function getWorkWeekDates(dateStr) {
-            const curr = new Date(dateStr);
-            const day = curr.getDay();
-            const diff = curr.getDate() - day + (day === 0 ? -6 : 1);
-            const monday = new Date(curr.setDate(diff));
+            const base = parseLocalDate(dateStr || todayStr);
+            const day = base.getDay();
+            const diffToMonday = day === 0 ? -6 : 1 - day;
+            const monday = new Date(base.getFullYear(), base.getMonth(), base.getDate() + diffToMonday);
             const dates = [];
             for (let i = 0; i < 5; i++) {
-                const next = new Date(monday);
-                next.setDate(monday.getDate() + i);
-                dates.push(next.toISOString().split('T')[0]);
+                const next = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+                dates.push(formatLocalDate(next));
             }
             return dates;
         }
 
         function openNewEventModal() {
             document.getElementById('edit-event-id').value = '';
-            document.getElementById('modal-event-date').value = document.getElementById('filter-date').value;
+            document.getElementById('modal-event-date').value = document.getElementById('filter-date').value || todayStr;
             document.getElementById('modal-event-time').selectedIndex = 0;
             document.getElementById('modal-event-status').value = 'Planlandı';
             document.getElementById('modal-event-desc').value = '';
@@ -825,7 +843,7 @@
 
         async function fetchEvents() {
             if (!currentUser) return;
-            const filterVal = document.getElementById('filter-date').value;
+            const filterVal = document.getElementById('filter-date').value || todayStr;
             
             let startDate, endDate;
             if (currentTab === 'genel') {
@@ -848,16 +866,21 @@
                 }
             }
 
-            const { data, error } = await query.order('saat', { ascending: true });
-            if (error) { console.error("Notlar çekilemedi:", error); return; }
-            cachedEvents = data || [];
+            const { data, error } = await query;
+            if (error) {
+                console.error("Notlar çekilemedi:", error);
+                cachedEvents = [];
+                renderActiveView();
+                return;
+            }
+            cachedEvents = (data || []).sort((a, b) => String(a.saat || '').localeCompare(String(b.saat || '')));
             renderActiveView();
         }
 
         function renderActiveView() {
             const container = document.getElementById('view-container');
             container.innerHTML = '';
-            const filterVal = document.getElementById('filter-date').value;
+            const filterVal = document.getElementById('filter-date').value || todayStr;
 
             if (currentTab === 'genel') {
                 const threeDays = get3DaysRange(filterVal);
@@ -870,7 +893,7 @@
                 threeDays.forEach((dStr, idx) => {
                     const isSelectedDay = (idx === 1);
                     const [y, m, d] = dStr.split('-');
-                    const dayNameTR = new Date(dStr).toLocaleDateString('tr-TR', { weekday: 'long' });
+                    const dayNameTR = parseLocalDate(dStr).toLocaleDateString('tr-TR', { weekday: 'long' });
 
                     const colDiv = document.createElement('div');
                     colDiv.className = `bg-slate-50 border ${isSelectedDay ? 'border-rose-500 ring-2 ring-rose-400/50 shadow-sm' : 'border-slate-200'} rounded-2xl p-3 flex flex-col min-h-[550px]`;
@@ -885,7 +908,7 @@
                     `;
                     gridDiv.appendChild(colDiv);
 
-                    const dayEvents = cachedEvents.filter(ev => ev.tarih === dStr).sort((a, b) => a.saat.localeCompare(b.saat));
+                    const dayEvents = cachedEvents.filter(ev => ev.tarih === dStr).sort((a, b) => String(a.saat || '').localeCompare(String(b.saat || '')));
                     const cardsContainer = colDiv.querySelector(`.day-cards-container-${dStr}`);
 
                     if (dayEvents.length === 0) {
@@ -957,7 +980,8 @@
                 container.appendChild(scrollDiv);
 
                 cachedEvents.forEach(ev => {
-                    const timeSafe = ev.saat.replace(':', '');
+                    if (!ev.saat) return;
+                    const timeSafe = String(ev.saat).slice(0, 5).replace(':', '');
                     const slotContainer = container.querySelector(`.slot-container-${ev.tarih}-${timeSafe}`);
                     if (slotContainer) {
                         slotContainer.appendChild(createEventCard(ev, true));
@@ -1004,7 +1028,7 @@
                 actions += `</div>`;
             }
 
-            const timeDisplay = isMatrix ? '' : `<span class="font-bold text-[10px] text-indigo-700 bg-white/80 px-1 rounded"><i class="fa-regular fa-clock mr-0.5"></i>${ev.saat}</span>`;
+            const timeDisplay = isMatrix ? '' : `<span class="font-bold text-[10px] text-indigo-700 bg-white/80 px-1 rounded"><i class="fa-regular fa-clock mr-0.5"></i>${escapeHtml(ev.saat)}</span>`;
             const icerikMetni = ev.aciklama || ev.metin || '';
 
             card.innerHTML = `
@@ -1061,7 +1085,10 @@
             doc.save(`Canakkale_112_KKM_Rapor.pdf`);
         }
 
-        document.getElementById('filter-date').addEventListener('change', fetchEvents);
+        document.getElementById('filter-date').addEventListener('change', function() {
+            renderActiveView();
+            fetchEvents();
+        });
 
         function escapeHtml(text) {
             if (!text) return '';
