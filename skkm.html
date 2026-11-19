@@ -6,7 +6,7 @@
     <title>Çanakkale 112 SKKM Ajanda</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style> 
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; } 
@@ -34,6 +34,7 @@
                         <option value="">Yükleniyor...</option>
                     </select>
                 </div>
+                <div id="db-status-box" class="hidden text-xs text-rose-700 bg-rose-50 p-3 rounded-xl border border-rose-200 font-medium break-words"></div>
                 <div>
                     <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Şifre</label>
                     <input type="password" id="login-pass" placeholder="Şifrenizi giriniz..." required class="w-full px-3 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 text-sm">
@@ -122,7 +123,7 @@
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <input type="text" id="admin-new-unit" placeholder="Birim / Unvan Adı" required class="px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white">
                     <select id="admin-new-role" class="px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white">
-                        <option value="admin">admin</option>
+                        <option value="Admin">Admin</option>
                         <option value="SKKM Sor.">SKKM Sor.</option>
                         <option value="SKKM">SKKM</option>
                     </select>
@@ -234,7 +235,6 @@
                 <div class="flex items-center gap-3 flex-wrap">
                     <button id="btn-add-event" onclick="openNewEventModal()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-xs"><i class="fa-solid fa-square-plus"></i> Plan Ekle</button>
                     
-                    <!-- Dinamik Navigasyon Butonları (Sekmeye Göre Değişir) -->
                     <button id="btn-prev" onclick="navigateNav(-1)" class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-xl text-xs font-semibold transition"><i class="fa-solid fa-chevron-left mr-1"></i> <span id="btn-prev-text">Önceki Gün</span></button>
                     <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-300 px-3 py-1 rounded-xl">
                         <label class="text-xs font-semibold text-slate-500" id="filter-label">Tarih:</label>
@@ -247,10 +247,8 @@
                 </div>
             </div>
 
-            <!-- Görünüm Alanı: Genel (3 Günlük Kolonlar) veya Sorumlu (5 Günlük Saat Matrisi) -->
-            <div id="view-container" class="bg-white rounded-2xl shadow-sm border border-slate-200 flex-grow overflow-hidden flex flex-col">
-                <!-- İçerik dinamik olarak oluşturulacak -->
-            </div>
+            <!-- Görünüm Alanı -->
+            <div id="view-container" class="bg-white rounded-2xl shadow-sm border border-slate-200 flex-grow overflow-hidden flex flex-col"></div>
         </main>
 
         <footer class="text-center py-4 text-xs text-slate-400 border-t border-slate-200 mt-6 bg-white">
@@ -260,24 +258,46 @@
 
     <!-- JavaScript Mantığı -->
     <script>
-        const SUPABASE_URL = 'https://dpwlgbnkqdolmczxtcbq.supabase.co';
-        const SUPABASE_ANON_KEY = 'sb_publishable_V7L29utZTCM125k55AD8Vg_Zv5z6S2q';
+        const SUPABASE_URL = 'https://adylgqlzumwnzgehqjwf.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_6FJPyl7rxOdLsjhqEWM4hA_6Ez9g2i4';
 
         const { createClient } = supabase;
         const _supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-        let USERS_TABLE = 'kullanicilar_KKM';
-        let NOTES_TABLE = 'ajanda_notlari_KKM';
+        const USERS_TABLE = 'kkm_kullanicilar';
+        const NOTES_TABLE = 'kk_ajanda_notlari';
 
         let usersList = [];
         let currentUser = null;
-        let currentTab = 'genel'; // 'genel' = 3 Günlük, 'kisisel' = 5 Günlük Saatli
+        let currentTab = 'genel';
         let cachedEvents = [];
         let clockInterval = null;
 
         const todayStr = new Date().toISOString().split('T')[0];
         document.getElementById('filter-date').value = todayStr;
         document.getElementById('pdf-report-month').value = todayStr.substring(0, 7);
+
+        function showDbStatus(msg) {
+            const box = document.getElementById('db-status-box');
+            if (!box) return;
+            if (msg) {
+                box.textContent = msg;
+                box.classList.remove('hidden');
+            } else {
+                box.textContent = '';
+                box.classList.add('hidden');
+            }
+        }
+
+        function getUserLabel(u) {
+            if (!u) return '';
+            return u.birim || u.adsoyad || u.kullanici || '';
+        }
+
+        function getUserRole(u) {
+            if (!u) return '';
+            return u.rol || '';
+        }
 
         function fixTurkishChars(str) {
             if (!str) return '';
@@ -321,22 +341,21 @@
         populateTimeOptions();
 
         async function loadUsers() {
-            let res = await _supabase.from('kullanicilar_KKM').select('*').order('id', { ascending: true });
-            if (res.error) {
-                res = await _supabase.from('kullanicilar_kkm').select('*').order('id', { ascending: true });
-                if (!res.error) {
-                    USERS_TABLE = 'kullanicilar_kkm';
-                    NOTES_TABLE = 'ajanda_notlari_kkm';
-                }
-            }
+            const { data, error } = await _supabase.from(USERS_TABLE).select('*');
 
-            if (res.error) {
-                console.error("Kullanıcılar yüklenemedi:", res.error);
+            if (error) {
+                console.error("Kullanıcılar yüklenemedi:", error);
+                showDbStatus("Veritabanı hatası (" + USERS_TABLE + "): " + error.message);
                 document.getElementById('login-user-select').innerHTML = `<option value="">Bağlantı Hatası</option>`;
                 return;
             }
 
-            usersList = res.data || [];
+            usersList = data || [];
+            if (usersList.length === 0) {
+                showDbStatus(USERS_TABLE + " tablosundan 0 kayıt geldi. GRANT / RLS iznini kontrol edin.");
+            } else {
+                showDbStatus("");
+            }
             populateLoginSelect();
             checkStoredSession();
         }
@@ -348,10 +367,12 @@
                 select.innerHTML = '<option value="">Kayıtlı birim bulunamadı</option>';
                 return;
             }
-            usersList.forEach(u => {
+            usersList.forEach((u, idx) => {
+                const label = getUserLabel(u);
+                const role = getUserRole(u);
                 const opt = document.createElement('option');
-                opt.value = u.birim;
-                opt.textContent = `${u.birim} (${u.rol})`;
+                opt.value = u.id !== undefined ? String(u.id) : String(idx);
+                opt.textContent = role ? `${label} (${role})` : label;
                 select.appendChild(opt);
             });
         }
@@ -362,7 +383,7 @@
             if (saved) {
                 try {
                     const parsed = JSON.parse(saved);
-                    const found = usersList.find(u => u.birim === parsed.birim);
+                    const found = usersList.find(u => getUserLabel(u) === getUserLabel(parsed));
                     if (found) {
                         currentUser = found;
                         startApp();
@@ -373,12 +394,16 @@
 
         function isFullAdmin() {
             if (!currentUser) return false;
-            return currentUser.rol === 'admin' || currentUser.birim === 'Başhekim' || currentUser.birim === 'Admin';
+            const label = getUserLabel(currentUser).toLowerCase();
+            const role = getUserRole(currentUser).toLowerCase();
+            return role === 'admin' || label === 'başhekim' || label === 'admin';
         }
 
         function isSKKMSor() {
             if (!currentUser) return false;
-            return currentUser.rol === 'SKKM Sor.' || currentUser.birim === 'SKKM Sor.';
+            const label = getUserLabel(currentUser).toLowerCase();
+            const role = getUserRole(currentUser).toLowerCase();
+            return role.includes('skkm sor') || label.includes('skkm sor');
         }
 
         function canManageGenel() {
@@ -391,7 +416,9 @@
             app.classList.remove('hidden');
             app.classList.add('flex');
 
-            document.getElementById('current-user-badge').textContent = `Aktif: ${currentUser.birim} (${currentUser.rol})`;
+            const label = getUserLabel(currentUser);
+            const role = getUserRole(currentUser);
+            document.getElementById('current-user-badge').textContent = `Aktif: ${label} (${role})`;
 
             if (isFullAdmin()) {
                 document.getElementById('admin-btn').classList.remove('hidden');
@@ -400,7 +427,7 @@
             }
 
             const kisiselTabBtn = document.getElementById('tab-kisisel');
-            if (currentUser.birim === 'SKKM' && !isFullAdmin() && !isSKKMSor()) {
+            if (label.toUpperCase() === 'SKKM' && !isFullAdmin() && !isSKKMSor()) {
                 kisiselTabBtn.classList.add('hidden');
             } else {
                 kisiselTabBtn.classList.remove('hidden');
@@ -475,18 +502,20 @@
             const listEl = document.getElementById('admin-user-list');
             listEl.innerHTML = '';
             usersList.forEach(user => {
+                const label = getUserLabel(user);
+                const role = getUserRole(user);
                 const item = document.createElement('div');
                 item.className = "flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs";
                 item.innerHTML = `
                     <div>
-                        <span class="font-bold text-slate-800">${user.birim}</span>
-                        <span class="text-slate-500 block">Rol: ${user.rol} | Şifre: ${user.sifre || ''}</span>
+                        <span class="font-bold text-slate-800">${escapeHtml(label)}</span>
+                        <span class="text-slate-500 block">Rol: ${escapeHtml(role)} | Şifre: ${escapeHtml(user.sifre || '')}</span>
                     </div>
                     <div class="flex items-center gap-1.5">
                         <button onclick="prepareEditUser('${user.id}')" class="text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded-lg transition" title="Düzenle">
                             <i class="fa-solid fa-pen"></i> Düzenle
                         </button>
-                        ${user.birim !== 'Başhekim' ? `<button onclick="deleteUserFromSupabase('${user.id}')" class="text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 px-2 py-1 rounded-lg transition" title="Sil"><i class="fa-solid fa-trash-can"></i> Sil</button>` : ''}
+                        ${label !== 'Başhekim' ? `<button onclick="deleteUserFromSupabase('${user.id}')" class="text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 px-2 py-1 rounded-lg transition" title="Sil"><i class="fa-solid fa-trash-can"></i> Sil</button>` : ''}
                     </div>
                 `;
                 listEl.appendChild(item);
@@ -496,13 +525,14 @@
         window.prepareEditUser = function(userId) {
             const user = usersList.find(u => u.id == userId);
             if (!user) return;
+            const label = getUserLabel(user);
 
             document.getElementById('admin-edit-user-id').value = user.id;
-            document.getElementById('admin-new-unit').value = user.birim;
-            document.getElementById('admin-new-role').value = user.rol;
+            document.getElementById('admin-new-unit').value = label;
+            document.getElementById('admin-new-role').value = getUserRole(user);
             document.getElementById('admin-new-pass').value = user.sifre;
 
-            document.getElementById('admin-form-title').innerHTML = `<i class="fa-solid fa-user-pen mr-1"></i> Birim / Rol Bilgisini Düzenle (${user.birim})`;
+            document.getElementById('admin-form-title').innerHTML = `<i class="fa-solid fa-user-pen mr-1"></i> Birim / Rol Bilgisini Düzenle (${escapeHtml(label)})`;
             const submitBtn = document.getElementById('admin-form-submit-btn');
             submitBtn.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> Değişiklikleri Kaydet`;
             submitBtn.className = "w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-2 rounded-xl text-xs transition flex items-center justify-center gap-1";
@@ -530,12 +560,15 @@
 
             if (!birim || !sifre) return;
 
+            const unitField = (usersList[0] && 'adsoyad' in usersList[0] && !('birim' in usersList[0])) ? 'adsoyad' : 'birim';
+            const payload = { [unitField]: birim, rol, sifre };
+
             if (editId) {
-                const { error } = await _supabase.from(USERS_TABLE).update({ birim, rol, sifre }).eq('id', editId);
+                const { error } = await _supabase.from(USERS_TABLE).update(payload).eq('id', editId);
                 if (error) { alert("Güncelleme hatası: " + error.message); return; }
                 alert("Birim bilgileri başarıyla güncellendi!");
             } else {
-                const { error } = await _supabase.from(USERS_TABLE).insert([{ birim, rol, sifre }]);
+                const { error } = await _supabase.from(USERS_TABLE).insert([payload]);
                 if (error) { alert("Kayıt eklenirken hata: " + error.message); return; }
                 alert(`${birim} birimi başarıyla eklendi!`);
             }
@@ -543,7 +576,6 @@
             resetAdminUserForm();
             await loadUsers();
             renderAdminUserList();
-            populateLoginSelect();
         });
 
         window.deleteUserFromSupabase = async function(userId) {
@@ -552,7 +584,6 @@
                 if (error) { alert("Silme hatası: " + error.message); return; }
                 await loadUsers();
                 renderAdminUserList();
-                populateLoginSelect();
             }
         };
 
@@ -562,9 +593,10 @@
             const [year, month] = monthInput.split('-');
             const lastDay = new Date(year, month, 0).getDate();
 
-            const { data: allEvents } = await _supabase.from(NOTES_TABLE).select('*')
+            const { data: allEvents, error } = await _supabase.from(NOTES_TABLE).select('*')
                 .gte('tarih', `${year}-${month}-01`).lte('tarih', `${year}-${month}-${lastDay}`);
 
+            if (error) { alert("Rapor verisi alınamadı: " + error.message); return; }
             if (!allEvents || allEvents.length === 0) {
                 alert("Seçilen ayda raporlanacak veri bulunamadı.");
                 return;
@@ -580,9 +612,10 @@
             let startY = 25;
             allEvents.forEach(ev => {
                 if (startY > 185) return;
+                const icerik = ev.aciklama || ev.metin || '';
                 doc.setFontSize(9);
                 doc.text(fixTurkishChars(`${ev.tarih} - Saat: ${ev.saat} | Tür: ${ev.tur} | Ekleyen: ${ev.ekleyen}`), 14, startY);
-                doc.text(fixTurkishChars(`Detay: ${ev.aciklama} (${ev.durum})`), 14, startY + 6);
+                doc.text(fixTurkishChars(`Detay: ${icerik} (${ev.durum})`), 14, startY + 6);
                 startY += 14;
             });
 
@@ -598,10 +631,11 @@
             const lastDay = new Date(year, month, 0).getDate();
 
             if (confirm(`Seçilen dönemin (${month}/${year}) ${targetType} verilerini silmek istediğinize emin misiniz?`)) {
-                await _supabase.from(NOTES_TABLE).delete()
+                const { error } = await _supabase.from(NOTES_TABLE).delete()
                     .gte('tarih', `${year}-${month}-01`)
                     .lte('tarih', `${year}-${month}-${lastDay}`)
                     .eq('tur', targetType);
+                if (error) { alert("Silme hatası: " + error.message); return; }
                 alert("Veriler başarıyla temizlendi.");
                 fetchEvents();
                 toggleAdminModal(false);
@@ -611,12 +645,16 @@
 
         document.getElementById('login-form').addEventListener('submit', function(e) {
             e.preventDefault();
-            const selectedBirim = document.getElementById('login-user-select').value;
+            const selectedId = document.getElementById('login-user-select').value;
             const enteredPass = document.getElementById('login-pass').value.trim();
             const errorEl = document.getElementById('login-error');
 
-            const found = usersList.find(u => u.birim === selectedBirim);
-            if (found && String(found.sifre) === enteredPass) {
+            const found = usersList.find((u, idx) => {
+                const key = u.id !== undefined ? String(u.id) : String(idx);
+                return key === selectedId;
+            });
+
+            if (found && String(found.sifre).trim() === enteredPass) {
                 currentUser = found;
                 localStorage.setItem('canakkale_kkm_user', JSON.stringify(currentUser));
                 errorEl.classList.add('hidden');
@@ -662,20 +700,18 @@
             fetchEvents();
         }
 
-        // Navigasyon (Genel sekmesinde 1 gün, Sorumlu sekmesinde 7 gün hafta kaydırır)
         function navigateNav(dir) {
             const input = document.getElementById('filter-date');
             const d = new Date(input.value);
             if (currentTab === 'genel') {
-                d.setDate(d.getDate() + dir); // 1 gün ileri/geri
+                d.setDate(d.getDate() + dir);
             } else {
-                d.setDate(d.getDate() + (dir * 7)); // 1 hafta ileri/geri
+                d.setDate(d.getDate() + (dir * 7));
             }
             input.value = d.toISOString().split('T')[0];
             fetchEvents();
         }
 
-        // Tarih Aralığı Hesaplayıcıları
         function get3DaysRange(dateStr) {
             const curr = new Date(dateStr);
             const dates = [];
@@ -684,13 +720,13 @@
                 next.setDate(curr.getDate() + i);
                 dates.push(next.toISOString().split('T')[0]);
             }
-            return dates; // [Önceki Gün, Mevcut Gün, Sonraki Gün]
+            return dates;
         }
 
         function getWorkWeekDates(dateStr) {
             const curr = new Date(dateStr);
             const day = curr.getDay();
-            const diff = curr.getDate() - day + (day === 0 ? -6 : 1); // Pazartesi
+            const diff = curr.getDate() - day + (day === 0 ? -6 : 1);
             const monday = new Date(curr.setDate(diff));
             const dates = [];
             for (let i = 0; i < 5; i++) {
@@ -698,7 +734,7 @@
                 next.setDate(monday.getDate() + i);
                 dates.push(next.toISOString().split('T')[0]);
             }
-            return dates; // Pazartesi - Cuma (5 gün)
+            return dates;
         }
 
         function openNewEventModal() {
@@ -718,7 +754,7 @@
             const statusInput = document.getElementById('modal-event-status');
             const cancelWarning = document.getElementById('cancel-warning');
 
-            const isSKKMOnlyStatus = (currentTab === 'genel' && currentUser.birim === 'SKKM' && !canManageGenel());
+            const isSKKMOnlyStatus = (currentTab === 'genel' && getUserLabel(currentUser).toUpperCase() === 'SKKM' && !canManageGenel());
 
             dateInput.disabled = isSKKMOnlyStatus;
             timeInput.disabled = isSKKMOnlyStatus;
@@ -729,7 +765,7 @@
                     dateInput.value = ev.tarih;
                     timeInput.value = ev.saat;
                     statusInput.value = ev.durum || 'Planlandı';
-                    descInput.value = ev.aciklama;
+                    descInput.value = ev.aciklama || ev.metin || '';
                 }
                 cancelWarning.classList.toggle('hidden', statusInput.value !== 'İptal');
                 modal.classList.remove('hidden');
@@ -759,24 +795,26 @@
 
             let turVal = currentTab; 
             let hedefVal = (currentTab === 'genel') ? 'Genel' : 'SKKM Sor.';
+            const ekleyenAdi = getUserLabel(currentUser);
 
             if (id) {
-                if (currentTab === 'genel' && currentUser.birim === 'SKKM' && !canManageGenel()) {
-                    const { error } = await _supabase.from(NOTES_TABLE).update({ durum, aciklama }).eq('id', id);
+                if (currentTab === 'genel' && ekleyenAdi.toUpperCase() === 'SKKM' && !canManageGenel()) {
+                    const { error } = await _supabase.from(NOTES_TABLE).update({ durum, aciklama, metin: aciklama }).eq('id', id);
                     if (error) { alert("Güncelleme hatası: " + error.message); return; }
                 } else {
-                    const { error } = await _supabase.from(NOTES_TABLE).update({ tarih, saat, durum, aciklama }).eq('id', id);
+                    const { error } = await _supabase.from(NOTES_TABLE).update({ tarih, saat, durum, aciklama, metin: aciklama }).eq('id', id);
                     if (error) { alert("Güncelleme hatası: " + error.message); return; }
                 }
             } else {
                 const { error } = await _supabase.from(NOTES_TABLE).insert([{ 
                     tur: turVal, 
                     hedef: hedefVal, 
-                    ekleyen: currentUser.birim, 
+                    ekleyen: ekleyenAdi, 
                     tarih, 
                     saat, 
                     durum, 
-                    aciklama 
+                    aciklama,
+                    metin: aciklama
                 }]);
                 if (error) { alert("Kayıt hatası: " + error.message); return; }
             }
@@ -785,7 +823,6 @@
             fetchEvents();
         });
 
-        // Veri Çekme (Sekmeye Göre 3 Günlük veya 5 Günlük Aralık)
         async function fetchEvents() {
             if (!currentUser) return;
             const filterVal = document.getElementById('filter-date').value;
@@ -817,14 +854,12 @@
             renderActiveView();
         }
 
-        // Aktif Sekmeye Göre Görünümü Render Etme
         function renderActiveView() {
             const container = document.getElementById('view-container');
             container.innerHTML = '';
             const filterVal = document.getElementById('filter-date').value;
 
             if (currentTab === 'genel') {
-                // 3 Günlük Kolon Görünümü
                 const threeDays = get3DaysRange(filterVal);
                 container.className = "bg-white rounded-2xl shadow-sm border border-slate-200 flex-grow p-4 overflow-x-auto custom-scrollbar";
                 
@@ -862,7 +897,6 @@
                 container.appendChild(gridDiv);
 
             } else {
-                // 5 Günlük (Pazartesi-Cuma) Saatli Matris Görünümü (index.html tarzı)
                 const weekDays = getWorkWeekDates(filterVal);
                 container.className = "bg-white rounded-2xl shadow-sm border border-slate-200 flex-grow overflow-hidden flex flex-col";
                 
@@ -872,7 +906,6 @@
                 const table = document.createElement('table');
                 table.className = "w-full border-collapse text-left min-w-[900px]";
 
-                // Tablo Başlığı
                 const thead = document.createElement('thead');
                 const headerTr = document.createElement('tr');
                 headerTr.className = "bg-slate-50 border-b border-slate-200 sticky top-0 z-20";
@@ -893,7 +926,6 @@
                 thead.appendChild(headerTr);
                 table.appendChild(thead);
 
-                // Tablo Gövdesi (Saat Dilimleri: 08:00 - 17:30)
                 const tbody = document.createElement('tbody');
                 tbody.className = "divide-y divide-slate-100";
 
@@ -924,7 +956,6 @@
                 scrollDiv.appendChild(table);
                 container.appendChild(scrollDiv);
 
-                // Kartları ilgili saat yuvalarına yerleştir
                 cachedEvents.forEach(ev => {
                     const timeSafe = ev.saat.replace(':', '');
                     const slotContainer = container.querySelector(`.slot-container-${ev.tarih}-${timeSafe}`);
@@ -935,7 +966,6 @@
             }
         }
 
-        // Ortak Kart Oluşturucu
         function createEventCard(ev, isMatrix = false) {
             const card = document.createElement('div');
             let bg = 'bg-sky-50 text-sky-900 border-sky-200';
@@ -957,7 +987,7 @@
             if (isFullAdmin() || isSKKMSor()) {
                 canEdit = true;
                 canDelete = true;
-            } else if (currentUser.birim === 'SKKM' && currentTab === 'genel') {
+            } else if (getUserLabel(currentUser).toUpperCase() === 'SKKM' && currentTab === 'genel') {
                 canEdit = true;
                 canDelete = false;
             }
@@ -975,6 +1005,7 @@
             }
 
             const timeDisplay = isMatrix ? '' : `<span class="font-bold text-[10px] text-indigo-700 bg-white/80 px-1 rounded"><i class="fa-regular fa-clock mr-0.5"></i>${ev.saat}</span>`;
+            const icerikMetni = ev.aciklama || ev.metin || '';
 
             card.innerHTML = `
                 <div class="flex justify-between items-center pr-6">
@@ -982,7 +1013,7 @@
                     <span class="font-semibold text-[11px]"><i class="fa-regular fa-user mr-0.5 text-[9px]"></i>${escapeHtml(ev.ekleyen)}</span>
                     ${statusBadge}
                 </div>
-                <p class="text-[11px] leading-tight whitespace-pre-wrap">${escapeHtml(ev.aciklama)}</p>
+                <p class="text-[11px] leading-tight whitespace-pre-wrap">${escapeHtml(icerikMetni)}</p>
                 ${actions}
             `;
             return card;
@@ -995,7 +1026,8 @@
 
         window.deleteEv = async function(id) {
             if (confirm("Bu kaydı silmek istediğinize emin misiniz?")) {
-                await _supabase.from(NOTES_TABLE).delete().eq('id', id);
+                const { error } = await _supabase.from(NOTES_TABLE).delete().eq('id', id);
+                if (error) { alert("Silme hatası: " + error.message); return; }
                 fetchEvents();
             }
         }
@@ -1018,11 +1050,12 @@
             cachedEvents.forEach(ev => {
                 if (startY > 185) return;
                 const [y, m, d] = ev.tarih.split('-');
+                const icerik = ev.aciklama || ev.metin || '';
                 doc.setFillColor(248, 250, 252);
                 doc.roundedRect(14, startY, 269, 11, 1, 1, 'FD');
                 doc.setFontSize(9);
                 doc.text(fixTurkishChars(`Tarih: ${d}.${m}.${y} - Saat: ${ev.saat}`), 18, startY + 7);
-                doc.text(fixTurkishChars(`${ev.ekleyen}: ${ev.aciklama} (${ev.durum || 'Planlandi'})`), 85, startY + 7);
+                doc.text(fixTurkishChars(`${ev.ekleyen}: ${icerik} (${ev.durum || 'Planlandi'})`), 85, startY + 7);
                 startY += 14;
             });
             doc.save(`Canakkale_112_KKM_Rapor.pdf`);
